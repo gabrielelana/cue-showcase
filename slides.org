@@ -1,0 +1,350 @@
+* What is CUE?
+Data validation language and inference engine
+- Data validation
+- Data templating
+- Configuration
+- Querying
+- Code generation
+
+* A Configuration Language
+
+You can consider it as a superset of JSON
+
+#+BEGIN_SRC cue :tangle src/constant.cue
+foo: 5 + 5
+bar: "foo is \(foo)"
+#+END_SRC
+
+Which can be exported to various formats
+
+#+BEGIN_SRC shell :results raw :wrap OUTPUT
+cue eval src/constant.cue
+#+END_SRC
+
+#+RESULTS:
+#+begin_OUTPUT
+foo: 10
+bar: "foo is 10"
+#+end_OUTPUT
+
+#+BEGIN_SRC shell :results raw :wrap OUTPUT
+cue export --out json src/constant.cue
+#+END_SRC
+
+#+RESULTS:
+#+begin_OUTPUT
+{
+    "foo": 10,
+    "bar": "foo is 10"
+}
+#+end_OUTPUT
+
+#+BEGIN_SRC shell :results raw :wrap OUTPUT
+cue export --out yaml src/constant.cue
+#+END_SRC
+
+#+RESULTS:
+#+begin_OUTPUT
+foo: 10
+bar: foo is 10
+#+end_OUTPUT
+
+#+BEGIN_SRC shell :results raw :wrap OUTPUT
+cue export --out toml src/constant.cue
+#+END_SRC
+
+#+RESULTS:
+#+begin_OUTPUT
+bar = 'foo is 10'
+foo = 10
+#+end_OUTPUT
+
+#+BEGIN_SRC shell :results raw :wrap OUTPUT
+cue export --out textproto src/constant.cue
+#+END_SRC
+
+#+RESULTS:
+#+begin_OUTPUT
+foo: 10
+bar: "foo is 10"
+#+end_OUTPUT
+
+* A Single Source of Truth for Many Configuration Files
+
+It's annoying when you have a few "configuration" values that must be replicated
+in different places but you want to duplicate them but you want to keep a single
+source of truth.
+
+With CUE you can keep all those value in a single CUE file and prepare different
+structures with a pontential subset of those values ready to be exported in
+different formats.
+
+#+BEGIN_SRC cue :tangle src/source-of-truth.cue
+// single value, single source of truth
+servicePort: 3000
+
+// will be exported as environment variable
+environment: {
+    PORT: servicePort
+}
+
+// will be exported as JSON configuration file
+configuration: {
+    port: servicePort
+}
+#+END_SRC
+
+#+BEGIN_SRC shell :results raw :wrap OUTPUT
+cue export --out json -e configuration src/source-of-truth.cue
+#+END_SRC
+
+#+RESULTS:
+#+begin_OUTPUT
+{
+    "port": 3000
+}
+#+end_OUTPUT
+
+#+BEGIN_SRC shell :results raw :wrap OUTPUT
+cue export --out toml -e environment src/source-of-truth.cue
+#+END_SRC
+
+#+RESULTS:
+#+begin_OUTPUT
+PORT = 3000
+#+end_OUTPUT
+
+* A Data Validation Language
+
+#+BEGIN_SRC cue :tangle src/person.cue
+// a single person defined in CUE
+person: {
+    firstName: "Gabriele"
+    lastName: "Lana"
+    occupation: "software developer"
+}
+#+END_SRC
+
+We want to make sure that *all* of the people have the same fields
+
+#+BEGIN_SRC cue :tangle src/person-schema.cue
+// this is also CUE
+person: {
+    firstName!: string
+    lastName!: string
+    occupation!: string
+}
+#+END_SRC
+
+#+BEGIN_SRC shell :results raw :wrap OUTPUT
+cue eval src/person-schema.cue
+#+END_SRC
+
+#+RESULTS:
+#+begin_OUTPUT
+person: {
+    firstName!:  string
+    lastName!:   string
+    occupation!: string
+}
+#+end_OUTPUT
+
+CUE will let us to put them together and so to ask CUE if they are compatibile
+with each other.
+
+By asking this in the end you are using one CUE value (~person~ defined in
+~src/person-schema.cue~) to validate another CUE value (~person~ defined in
+~src/person.cue~)
+
+#+BEGIN_SRC shell :results raw :wrap OUTPUT
+cue export --out json src/person-schema.cue src/person.cue
+#+END_SRC
+
+#+RESULTS:
+#+begin_OUTPUT
+{
+    "person": {
+        "firstName": "Gabriele",
+        "lastName": "Lana",
+        "occupation": "software developer"
+    }
+}
+#+end_OUTPUT
+
+What if something is not "compatibile" with the schema?
+
+#+BEGIN_SRC cue :tangle src/bad-person.cue
+// a single person defined in CUE
+person: {
+    firstName: "Gabriele"
+    lastName: "Lana"
+}
+#+END_SRC
+
+#+BEGIN_SRC shell :results raw :wrap OUTPUT
+cue vet -c src/person-schema.cue src/bad-person.cue 2>&1
+#+END_SRC
+
+#+RESULTS:
+#+begin_OUTPUT
+person.occupation: field is required but not present:
+    ./src/person-schema.cue:5:5
+#+end_OUTPUT
+
+* A Data Validation Language (2)
+
+How does it work? CUE has no conventional values, every value is a constraint,
+constraints are an unordered set, order doesn't matter
+
+#+BEGIN_SRC cue :tangle src/constraints.cue
+foo: string
+foo: =~ "[0-9]{2}$"
+foo: "the answer is 42"
+#+END_SRC
+
+#+BEGIN_SRC shell :results raw :wrap OUTPUT
+cue export --out json src/constraints.cue 2>&1
+#+END_SRC
+
+#+RESULTS:
+#+begin_OUTPUT
+{
+    "foo": "the answer is 42"
+}
+#+end_OUTPUT
+
+This means that constraints can be added at any time, immagine the financial
+department requiring the vat number for the person schema
+
+#+BEGIN_SRC cue :tangle src/person-financial.cue
+person: {
+    vat!: string & =~ "^IT"
+}
+#+END_SRC
+
+#+BEGIN_SRC shell :results raw :wrap OUTPUT
+cue vet -c src/person-schema.cue src/person-financial.cue src/person.cue 2>&1
+#+END_SRC
+
+#+RESULTS:
+#+begin_OUTPUT
+person.vat: field is required but not present:
+    ./src/person-financial.cue:2:5
+#+end_OUTPUT
+
+#+BEGIN_SRC cue :tangle src/complete-person.cue
+person: {
+    firstName: "Gabriele"
+    lastName: "Lana"
+    occupation: "software developer"
+    vat: "IT08937100967"
+}
+#+END_SRC
+
+#+BEGIN_SRC shell :results raw :wrap OUTPUT
+cue export --out json src/person-schema.cue src/person-financial.cue src/complete-person.cue 2>&1
+#+END_SRC
+
+#+RESULTS:
+#+begin_OUTPUT
+{
+    "person": {
+        "firstName": "Gabriele",
+        "lastName": "Lana",
+        "occupation": "software developer",
+        "vat": "IT08937100967"
+    }
+}
+#+end_OUTPUT
+
+You can go further, not every person has a vat number
+
+#+BEGIN_SRC cue :tangle src/person-financial-smart.cue
+person: {
+        consultant: true | false
+        if consultant == true {
+                vat!: string & =~ "^IT"
+        }
+}
+#+END_SRC
+
+#+BEGIN_SRC cue :tangle src/person-financial-smart.cue
+person: {
+        consultant: true | false
+        if consultant == true {
+                vat!: string & =~ "^IT"
+        }
+}
+#+END_SRC
+
+#+BEGIN_SRC shell :results raw :wrap OUTPUT
+cue eval src/person-schema.cue src/person-financial-smart.cue 2>&1
+#+END_SRC
+
+#+RESULTS:
+#+begin_OUTPUT
+person: {
+    consultant: true | false
+    if consultant == true {
+        vat!: =~"^IT"
+    }
+} & {
+    firstName!:  string
+    lastName!:   string
+    occupation!: string
+}
+#+end_OUTPUT
+
+#+BEGIN_SRC shell :results raw :wrap OUTPUT
+cue export --out json src/person-schema.cue src/person-financial-smart.cue src/complete-person.cue 2>&1
+#+END_SRC
+
+#+RESULTS:
+#+begin_OUTPUT
+person: unresolved disjunction true | false (type bool):
+    ./src/person-financial-smart.cue:3:12
+#+end_OUTPUT
+
+#+BEGIN_SRC cue :tangle src/truly-complete-person.cue
+person: {
+    firstName: "Gabriele"
+    lastName: "Lana"
+    occupation: "software developer"
+    consultant: true
+    vat: "IT08937100967"
+}
+#+END_SRC
+
+#+BEGIN_SRC shell :results raw :wrap OUTPUT
+cue export --out json src/person-schema.cue src/person-financial-smart.cue src/truly-complete-person.cue 2>&1
+#+END_SRC
+
+#+RESULTS:
+#+begin_OUTPUT
+{
+    "person": {
+        "firstName": "Gabriele",
+        "lastName": "Lana",
+        "consultant": true,
+        "vat": "IT08937100967",
+        "occupation": "software developer"
+    }
+}
+#+end_OUTPUT
+
+* Data Generation
+
+TODO
+
+* Example: Avro
+
+TODO
+
+* Example: OpenAPI
+
+TODO
+
+* What's Next?
+- [[https://cuelang.org/docs/tour/][Official documentation]]
+- [[https://cuetorials.com][Tutorial from practitioners]]
+- [[https://github.com/search?q=lang%3Acue+&type=code][Seach examples on GitHub 🥲]]

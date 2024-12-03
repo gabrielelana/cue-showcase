@@ -1,0 +1,3 @@
+person: {
+    vat!: string & =~ "^IT"
+}
