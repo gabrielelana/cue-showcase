@@ -332,13 +332,450 @@ cue export --out json src/person-schema.cue src/person-financial-smart.cue src/t
 }
 #+end_OUTPUT
 
-* Data Generation
+* Data Templating
 
-TODO
+#+BEGIN_SRC cue :tangle src/generate-people.cue
+#Person: {
+    firstName!: string & =~"^[A-Z].*$"
+    lastName!: string & =~"^[A-Z].*$"
+    fullName: "\(firstName) \(lastName)"
+    occupation!: string
+    consultant: bool | *false
+    if consultant == true {
+        vat!: =~"^IT"
+    }
+}
+
+people: [...#Person]
+
+people: [{
+    firstName: "Gabriele"
+    lastName: "Lana"
+    occupation: "software developer"
+    consultant: true
+    vat: "IT08937100967"
+}, {
+    firstName: "Mario"
+    lastName: "Rossi"
+    occupation: "baker"
+}]
+#+END_SRC
+
+#+BEGIN_SRC shell :results raw :wrap OUTPUT
+cue export --out json src/generate-people.cue 2>&1
+#+END_SRC
+
+#+RESULTS:
+#+begin_OUTPUT
+{
+    "people": [
+        {
+            "firstName": "Gabriele",
+            "lastName": "Lana",
+            "fullName": "Gabriele Lana",
+            "occupation": "software developer",
+            "consultant": true,
+            "vat": "IT08937100967"
+        },
+        {
+            "firstName": "Mario",
+            "lastName": "Rossi",
+            "fullName": "Mario Rossi",
+            "occupation": "baker",
+            "consultant": false
+        }
+    ]
+}
+#+end_OUTPUT
+
+More useful when things are repeated many times
+
+#+BEGIN_SRC cue :tangle src/generate-servers.cue
+#DB: "postgresql" | =~"db$"
+#CheckPostgreSQL: close({for k, v in services {"\(k)": true}}) & {"postgresql": true}
+
+services: {
+        nginx: _
+        blizard: _
+        "otel-collector": command: "exec otel"
+        boltdb: replicas: 3
+        postgresql: replicas: 5
+}
+
+services: [Name=_]: {
+        name:     Name
+        command:  string | *"exec \(Name)"
+        replicas: uint | *1
+}
+
+services: [#DB]: replicas: >=3
+#+END_SRC
+
+#+BEGIN_SRC shell :results raw :wrap OUTPUT
+cue export --out json src/generate-servers.cue 2>&1
+#+END_SRC
+
+#+RESULTS:
+#+begin_OUTPUT
+{
+    "services": {
+        "nginx": {
+            "name": "nginx",
+            "command": "exec nginx",
+            "replicas": 1
+        },
+        "blizard": {
+            "name": "blizard",
+            "command": "exec blizard",
+            "replicas": 1
+        },
+        "otel-collector": {
+            "name": "otel-collector",
+            "command": "exec otel",
+            "replicas": 1
+        },
+        "boltdb": {
+            "name": "boltdb",
+            "command": "exec boltdb",
+            "replicas": 3
+        },
+        "postgresql": {
+            "name": "postgresql",
+            "command": "exec postgresql",
+            "replicas": 5
+        }
+    }
+}
+#+end_OUTPUT
 
 * Example: Avro
 
-TODO
+First the basic definition of the Avro schema
+
+#+BEGIN_SRC cue :tangle src/avro-base.cue
+#Schema: #TypeName | #Union | #Record | #Enum | #Array
+
+#Name: =~#"^([A-Za-z_][A-Za-z0-9_]*)(\.([A-Za-z_][A-Za-z0-9_]*))*$"#
+
+#TypeName: #PrimitiveType | #DefinedType
+#TypeName: #Name
+
+#PrimitiveType: "null" | "boolean" | "int" | "long" | "float" | "double" | "bytes" | "string"
+
+#DefinedType: string
+
+#Union: [... #Schema]
+
+#Definition: {
+    type!: string
+    name!: #DefinedType
+    namespace?: =~#"^([A-Za-z_][A-Za-z0-9_]*)(\.([A-Za-z_][A-Za-z0-9_]*))*"#
+    aliases?: [...string]
+    doc?: string
+    ...
+}
+
+#Record: #Definition & {
+    type!: "record"
+    doc?: string
+    fields!: [... #Field]
+}
+
+#Enum: #Definition & {
+    type!: "enum"
+    name!: string
+    symbols!: [... #Name]
+    default?: #Name
+    if !list.Contains(symbols, default) {
+        default?: _|_
+    }
+}
+
+#Array: {
+    type!: "array"
+    items!: #Schema
+    default!: []
+}
+
+// ...
+#+END_SRC
+
+Then you can add you own constraint, for you own domain, we called them "briks"
+
+#+BEGIN_SRC cue :tangle src/avro-briks.cue
+#Money: avro.#Record & {
+    type!: "record"
+    name!: "Money"
+    fields!: [{
+        name!: "amount"
+        type!: "int"
+    }, {
+        name!: "currency"
+        type!: avro.#Enum & {
+            name!: "Currency"
+            symbols!: ["EUR"]
+            default!: "EUR"
+        }
+    }]
+}
+
+#DateTime: avro.#Field & {
+    name!: avro.#Name,
+    type!: "string"
+}
+
+// ...
+#+END_SRC
+
+The you can use it
+
+#+BEGIN_SRC cue :tangle src/avro-consents.cue
+#ConsentFieldNames: ["consents", "given", "denied"]
+
+#ConsentFields: {
+    for _name in #ConsentFieldNames {
+        "\(_name)": {
+            name: "\(_name)_Consent"
+            type: "record"
+            fields: [
+                {name: "name", type: "string"},
+                {name: "owner", type: avro.#Enum & {
+                    name: "\(_name)_Owner"
+                    symbols: [
+                        "UNKNOWN",
+                        "MARKETING",
+                        "BROADBAND",
+                        "ENERGY",
+                        "INSURANCE_MOTOR",
+                        "INSURANCE_LIFE",
+                        "INSURANCE_PROFESSIONAL",
+                        "INSURANCE_PET",
+                        "LONG_TERM_RENTAL",
+                        "MORTGAGE",
+                        "LOAN",
+                        "PERSONAL_AREA",
+                ],
+                    default: "UNKNOWN"
+                }},
+                {name: "isMandatory", type: "boolean"},
+                {name: "given", type: "boolean"},
+                briks.#DateTime & {name: "updatedAt"},
+        ]}
+    }
+}
+
+#Identity: {
+    name: "Identity"
+    type: "record"
+    fields: [
+        {name: "email", type: "string"},
+        {name: "facileUserId", type: ["null", "string"]},
+    ]
+}
+
+avro.#Schema & {
+    name: "Consents"
+    fields: [
+        {name: "identity", type: #Identity},
+        briks.#DateTime & {name: "createdAt"},
+        briks.#DateTime & {name: "updatedAt"},
+        for _name in #ConsentFieldNames {
+            {name: _name, type: {
+                type: "array",
+                items: #ConsentFields[_name],
+                default: [],
+            }}
+        }
+    ]
+}
+#+END_SRC
+
+#+BEGIN_SRC json
+{
+  "name": "Consents",
+  "type": "record",
+  "fields": [
+    {
+      "name": "identity",
+      "type": {
+        "name": "Identity",
+        "type": "record",
+        "fields": [
+          {
+            "name": "email",
+            "type": "string"
+          },
+          {
+            "name": "facileUserId",
+            "type": ["null", "string"]
+          }
+        ]
+      }
+    },
+    {
+      "name": "createdAt",
+      "type": "string"
+    },
+    {
+      "name": "updatedAt",
+      "type": "string"
+    },
+    {
+      "name": "consents",
+      "type": {
+        "type": "array",
+        "default": [],
+        "items": {
+          "name": "Consent",
+          "type": "record",
+          "fields": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "owner",
+              "type": {
+                "name": "Owner",
+                "type": "enum",
+                "symbols": [
+                  "UNKNOWN",
+                  "MARKETING",
+                  "BROADBAND",
+                  "ENERGY",
+                  "INSURANCE_MOTOR",
+                  "INSURANCE_LIFE",
+                  "INSURANCE_PROFESSIONAL",
+                  "INSURANCE_PET",
+                  "LONG_TERM_RENTAL",
+                  "MORTGAGE",
+                  "LOAN",
+                  "PERSONAL_AREA"
+                ],
+                "default": "UNKNOWN"
+              }
+            },
+            {
+              "name": "isMandatory",
+              "type": "boolean"
+            },
+            {
+              "name": "updatedAt",
+              "type": "string"
+            },
+            {
+              "name": "given",
+              "type": "boolean"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "given",
+      "type": {
+        "type": "array",
+        "default": [],
+        "items": {
+          "name": "Consent",
+          "type": "record",
+          "fields": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "owner",
+              "type": {
+                "name": "Owner",
+                "type": "enum",
+                "symbols": [
+                  "UNKNOWN",
+                  "MARKETING",
+                  "BROADBAND",
+                  "ENERGY",
+                  "INSURANCE_MOTOR",
+                  "INSURANCE_LIFE",
+                  "INSURANCE_PROFESSIONAL",
+                  "INSURANCE_PET",
+                  "LONG_TERM_RENTAL",
+                  "MORTGAGE",
+                  "LOAN",
+                  "PERSONAL_AREA"
+                ],
+                "default": "UNKNOWN"
+              }
+            },
+            {
+              "name": "isMandatory",
+              "type": "boolean"
+            },
+            {
+              "name": "updatedAt",
+              "type": "string"
+            },
+            {
+              "name": "given",
+              "type": "boolean"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "denied",
+      "type": {
+        "type": "array",
+        "default": [],
+        "items": {
+          "name": "Consent",
+          "type": "record",
+          "fields": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "owner",
+              "type": {
+                "name": "Owner",
+                "type": "enum",
+                "symbols": [
+                  "UNKNOWN",
+                  "MARKETING",
+                  "BROADBAND",
+                  "ENERGY",
+                  "INSURANCE_MOTOR",
+                  "INSURANCE_LIFE",
+                  "INSURANCE_PROFESSIONAL",
+                  "INSURANCE_PET",
+                  "LONG_TERM_RENTAL",
+                  "MORTGAGE",
+                  "LOAN",
+                  "PERSONAL_AREA"
+                ],
+                "default": "UNKNOWN"
+              }
+            },
+            {
+              "name": "isMandatory",
+              "type": "boolean"
+            },
+            {
+              "name": "updatedAt",
+              "type": "string"
+            },
+            {
+              "name": "given",
+              "type": "boolean"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
+#+END_SRC
 
 * Example: OpenAPI
 
