@@ -6,6 +6,8 @@ Data validation language and inference engine
 - Querying
 - Code generation
 
+Originally from Google (improved upon GCL = Google Configuration Language)
+
 * A Configuration Language
 
 You can consider it as a superset of JSON
