@@ -956,6 +956,7 @@ paths: {
 
 
 * What's Next?
+- [[https://github.com/cue-labs/cue-by-example][Cue By Example]]
 - [[https://cuelang.org/docs/tour/][Official documentation]]
 - [[https://cuetorials.com][Tutorial from practitioners]]
 - [[https://github.com/search?q=lang%3Acue+&type=code][Seach examples on GitHub 🥲]]
