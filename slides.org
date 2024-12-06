@@ -334,6 +334,36 @@ cue export --out json src/person-schema.cue src/person-financial-smart.cue src/t
 }
 #+end_OUTPUT
 
+Fields can be referred
+
+#+BEGIN_SRC cue :tangle src/field-reference.cue
+count: {
+    // useless but cool
+    min!: uint & <=count.max
+    max!: uint & >=count.min
+}
+
+// try to break the mutual constraint
+// try to remove a field
+// try to add a field
+count: min: 1
+count: max: 5
+#+END_SRC
+
+#+BEGIN_SRC shell :results raw :wrap OUTPUT
+cue export --out json src/field-reference.cue 2>&1
+#+END_SRC
+
+#+RESULTS:
+#+begin_OUTPUT
+{
+    "count": {
+        "min": 1,
+        "max": 5
+    }
+}
+#+end_OUTPUT
+
 * Data Templating
 
 #+BEGIN_SRC cue :tangle src/generate-people.cue
