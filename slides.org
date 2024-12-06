@@ -921,7 +921,7 @@ info: {
 // NOTE: you can define special constraints for your domain
 paths: [Route=string]: [oas.#Method]: responses: "500": oas.#UnhandledError
 paths: [Route=string]: [oas.#Method]: responses: "503": oas.#ServiceNotAvailableError
-paths: [Route=string]: "post": responses: "400": oas.#ValidationError
+paths: [Route=string]: post: responses: "400": oas.#ValidationError
 
 paths: {
     "/ping": "get":                           #Ping
